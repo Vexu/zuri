@@ -6,7 +6,6 @@ const HashMap = std.HashMap;
 const assert = std.debug.assert;
 const parseUnsigned = std.fmt.parseUnsigned;
 
-
 const StringList = ArrayList([]const u8);
 const ValueMap = HashMap([]const u8, []const u8, mem.hash_slice_u8, mem.eql_slice_u8);
 
@@ -33,20 +32,20 @@ const URI = struct {
         var start: u32 = 0;
         var mid: u32 = 0;
         for (u.query) |c, i| {
-            if (c == ';' or c  == '&') {
+            if (c == ';' or c == '&') {
                 if (mid != 0) {
-                    _ = try map.put(u.query[start..mid], u.query[mid+1..i]);
+                    _ = try map.put(u.query[start..mid], u.query[mid + 1 .. i]);
                 } else {
                     _ = try map.put(u.query[start..i], "");
                 }
-                start = @truncate(u32, i+1);
+                start = @truncate(u32, i + 1);
                 mid = 0;
-            } else if (c  == '=') {
+            } else if (c == '=') {
                 mid = @truncate(u32, i);
             }
         }
         if (mid != 0) {
-            _ = try map.put(u.query[start..mid], u.query[mid+1..]);
+            _ = try map.put(u.query[start..mid], u.query[mid + 1 ..]);
         } else {
             _ = try map.put(u.query[start..], "");
         }
@@ -62,7 +61,7 @@ const URI = struct {
     }
 };
 
-pub const URIError = error {
+pub const URIError = error{
     InvalidChar,
     EmptyURI,
     NoQuery,
@@ -78,7 +77,7 @@ pub const Parser = struct {
             .uri = undefined,
         };
     }
-    
+
     pub fn deinit(p: *Parser) void {
         p.path_list.deinit();
     }
@@ -92,7 +91,7 @@ pub const Parser = struct {
             .password = "",
             .host = "",
             .port = null,
-            .path = [][]const u8 {},
+            .path = [][]const u8{},
             .query = "",
             .fragment = "",
             .allocator = p.path_list.allocator,
@@ -110,14 +109,14 @@ pub const Parser = struct {
                     return error.InvalidChar;
                 }
             },
-            'a' ... 'z', 'A'...'Z' => {
+            'a'...'z', 'A'...'Z' => {
                 try p.parseMaybeScheme(input);
             },
             else => {
                 if (!is_pchar(input))
                     return error.InvalidChar;
                 try p.parsePath(input);
-            }
+            },
         }
 
         p.uri.path = p.path_list.toOwnedSlice();
@@ -127,19 +126,19 @@ pub const Parser = struct {
     fn parseMaybeScheme(p: *Parser, input: []const u8) !void {
         for (input) |c, i| {
             switch (c) {
-                'a' ... 'z', 'A'...'Z', '0'...'9', '+', '-', '.' => {
+                'a'...'z', 'A'...'Z', '0'...'9', '+', '-', '.' => {
                     //allowed characters
                 },
                 ':' => {
                     p.uri.scheme = input[0..i];
                     if (input.len > i + 1) {
-                        if (input[i+1] == '/') {
-                            if (input.len > i + 2 and input[i+2] == '/') {
-                                return p.parseAuth(input[i+3..]);
+                        if (input[i + 1] == '/') {
+                            if (input.len > i + 2 and input[i + 2] == '/') {
+                                return p.parseAuth(input[i + 3 ..]);
                             }
-                            return p.parsePath(input[i+1..]);
+                            return p.parsePath(input[i + 1 ..]);
                         } else {
-                            return p.parseMaybeAuth(input[i+1..]);
+                            return p.parseMaybeAuth(input[i + 1 ..]);
                         }
                     } else {
                         return;
@@ -169,7 +168,7 @@ pub const Parser = struct {
                 else => {
                     if (!is_pchar(input))
                         return error.InvalidChar;
-                }
+                },
             }
         }
         try p.path_list.append(input[0..]);
@@ -180,7 +179,7 @@ pub const Parser = struct {
             switch (c) {
                 '@' => {
                     p.uri.username = input[0..i];
-                    return p.parseHost(input[i+1..]);
+                    return p.parseHost(input[i + 1 ..]);
                 },
                 '[' => {
                     if (i != 0)
@@ -189,7 +188,7 @@ pub const Parser = struct {
                 },
                 ':' => {
                     p.uri.host = input[0..i];
-                    return p.parseAuthColon(input[i+1..]);
+                    return p.parseAuthColon(input[i + 1 ..]);
                 },
                 '/', '?', '#' => {
                     p.uri.host = input[0..i];
@@ -198,7 +197,7 @@ pub const Parser = struct {
                 else => {
                     if (!is_pchar(input))
                         return error.InvalidChar;
-                }
+                },
             }
         }
         p.uri.host = input;
@@ -210,7 +209,7 @@ pub const Parser = struct {
                 '@' => {
                     p.uri.username = p.uri.host;
                     p.uri.password = input[0..i];
-                    return p.parseHost(input[i+1..]);
+                    return p.parseHost(input[i + 1 ..]);
                 },
                 '/', '?', '#' => {
                     p.uri.port = try parseUnsigned(u16, input[0..i], 10);
@@ -219,7 +218,7 @@ pub const Parser = struct {
                 else => {
                     if (!is_pchar(input))
                         return error.InvalidChar;
-                }
+                },
             }
         }
         p.uri.port = try parseUnsigned(u16, input, 10);
@@ -243,7 +242,7 @@ pub const Parser = struct {
                 else => {
                     if (!is_pchar(input))
                         return error.InvalidChar;
-                }
+                },
             }
         }
         p.uri.host = input[0..];
@@ -254,7 +253,7 @@ pub const Parser = struct {
         var digits: u8 = 0;
         var done = false;
         var first: usize = 0;
-        for (input) |c,i| {
+        for (input) |c, i| {
             switch (c) {
                 ':' => {
                     if (done)
@@ -275,7 +274,7 @@ pub const Parser = struct {
                         return error.InvalidChar;
                 },
                 ']' => {
-                    p.uri.host = input[0..i+1];
+                    p.uri.host = input[0 .. i + 1];
                     done = true;
                 },
                 '/', '?', '#' => {
@@ -287,14 +286,15 @@ pub const Parser = struct {
                 else => {
                     if (!is_hex(c)) {
                         return error.InvalidChar;
-                    } if (digits == 4) {
+                    }
+                    if (digits == 4) {
                         return error.InvalidChar;
                     } else if (digits == 0) {
                         first = i;
                     }
-                        
+
                     digits += 1;
-                }
+                },
             }
         }
         unreachable;
@@ -313,12 +313,12 @@ pub const Parser = struct {
                 else => {
                     if (!is_pchar(input))
                         return error.InvalidChar;
-                }
+                },
             }
         }
         p.uri.port = try parseUnsigned(u16, input[0..], 10);
     }
-    
+
     fn parsePath(p: *Parser, input: []const u8) !void {
         const uri = p.uri;
 
@@ -328,12 +328,12 @@ pub const Parser = struct {
                 '?' => {
                     if (begin != i)
                         try p.path_list.append(input[begin..i]);
-                    return p.parseQuery(input[i+1..]);
+                    return p.parseQuery(input[i + 1 ..]);
                 },
                 '#' => {
                     if (begin != i)
                         try p.path_list.append(input[begin..i]);
-                    return p.parseFragment(input[i+1..]);
+                    return p.parseFragment(input[i + 1 ..]);
                 },
                 '/' => {
                     if (begin != i)
@@ -353,7 +353,7 @@ pub const Parser = struct {
         for (input) |c, i| {
             if (c == '#') {
                 p.uri.query = input[0..i];
-                return p.parseFragment(input[i+1..]);
+                return p.parseFragment(input[i + 1 ..]);
             } else if (c != '/' and c != '?' and !is_pchar(input[i..])) {
                 return error.InvalidChar;
             }
@@ -363,7 +363,7 @@ pub const Parser = struct {
 
     fn parseFragment(p: *Parser, input: []const u8) !void {
         for (input) |c, i| {
-            if (c != '/' and c != '?' and !is_pchar(input[i..]) ) {
+            if (c != '/' and c != '?' and !is_pchar(input[i..])) {
                 return error.InvalidChar;
             }
         }

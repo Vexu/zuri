@@ -6,7 +6,6 @@ pub fn build(b: *Builder) void {
 
     tests.setOutputDir("bin");
 
-
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&tests.step);
     b.default_step.dependOn(test_step);

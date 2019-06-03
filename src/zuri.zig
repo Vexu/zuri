@@ -2,13 +2,13 @@ const std = @import("std");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const ArrayList = std.ArrayList;
-const AutoHashMap = std.AutoHashMap;
+const HashMap = std.HashMap;
 const assert = std.debug.assert;
 const parseUnsigned = std.fmt.parseUnsigned;
 
 
 const StringList = ArrayList([]const u8);
-const ValueMap = AutoHashMap([]const u8, []const u8);
+const ValueMap = HashMap([]const u8, []const u8, mem.hash_slice_u8, mem.eql_slice_u8);
 
 const URI = struct {
     scheme: []const u8,
@@ -20,34 +20,41 @@ const URI = struct {
     query: []const u8,
     fragment: []const u8,
 
-    pub fn mapQuery(self: *URI, allocator: *Allocator) !ValueMap {
+    pub fn mapQuery(u: *const URI, allocator: *Allocator) !ValueMap {
+        if (u.query.len == 0) {
+            return error.NoQuery;
+        }
+        var map = ValueMap.init(allocator);
+        errdefer map.deinit();
+        var start: u32 = 0;
+        var mid: u32 = 0;
+        for (u.query) |c, i| {
+            if (c == ';' or c  == '&') {
+                if (mid != 0) {
+                    _ = try map.put(u.query[start..mid], u.query[mid+1..i]);
+                } else {
+                    _ = try map.put(u.query[start..i], "");
+                }
+                start = @truncate(u32, i+1);
+                mid = 0;
+            } else if (c  == '=') {
+                mid = @truncate(u32, i);
+            }
+        }
+        if (mid != 0) {
+            _ = try map.put(u.query[start..mid], u.query[mid+1..]);
+        } else {
+            _ = try map.put(u.query[start..], "");
+        }
 
+        return map;
     }
 };
 
-const URIError = error {
+pub const URIError = error {
     InvalidChar,
     EmptyURI,
-};
-
-const State = enum {
-    Begin,
-    PathOrAuth,
-
-    MaybeScheme,
-    AfterScheme,
-    Auth,
-    AuthColon,
-    
-    IPV6,
-    IPV6Cont,
-    Host,
-    Port,
-
-    Path,
-
-    Query,
-    Fragment,
+    NoQuery,
 };
 
 pub const Parser = struct {
@@ -104,7 +111,7 @@ pub const Parser = struct {
         return uri;
     }
 
-    pub fn parseMaybeScheme(p: *Parser, input: []const u8) !void {
+    fn parseMaybeScheme(p: *Parser, input: []const u8) !void {
         for (input) |c, i| {
             switch (c) {
                 'a' ... 'z', 'A'...'Z', '0'...'9', '+', '-', '.' => {
@@ -230,8 +237,54 @@ pub const Parser = struct {
     }
 
     fn parseIP(p: *Parser, input: []const u8) !void {
-        // unreachable;
-        return error.InvalidChar;
+        var groups: u8 = 0;
+        var digits: u8 = 0;
+        var done = false;
+        var first: usize = 0;
+        for (input) |c,i| {
+            switch (c) {
+                ':' => {
+                    if (done)
+                        return p.parsePort(input[i..]);
+                    digits = 0;
+                    groups += 1;
+                    if (groups > 7)
+                        return error.InvalidChar;
+                },
+                '.' => {
+                    if (groups < 1 or digits > 3 or (digits == 3 and (try parseUnsigned(u8, input[first..i], 10)) >= 0))
+                        return error.InvalidChar;
+                    digits = 0;
+                    groups = 8;
+                },
+                '[' => {
+                    if (i != 0)
+                        return error.InvalidChar;
+                },
+                ']' => {
+                    p.uri.host = input[0..i+1];
+                    done = true;
+                },
+                '/', '?', '#' => {
+                    if (!done)
+                        return error.InvalidChar;
+                    p.uri.host = input[0..i];
+                    return p.parsePath(input[i..]);
+                },
+                else => {
+                    if (!is_hex(c)) {
+                        return error.InvalidChar;
+                    } if (digits == 4) {
+                        return error.InvalidChar;
+                    } else if (digits == 0) {
+                        first = i;
+                    }
+                        
+                    digits += 1;
+                }
+            }
+        }
+        unreachable;
     }
 
     fn parsePort(p: *Parser, input: []const u8) !void {
@@ -274,10 +327,6 @@ pub const Parser = struct {
                         try p.path_list.append(input[begin..i]);
                     begin = i;
                 },
-                '.' => {
-                    //todo
-                    unreachable;
-                },
                 else => {
                     if (!is_pchar(input[i..]))
                         return error.InvalidChar;
@@ -293,7 +342,7 @@ pub const Parser = struct {
                 p.uri.query = input[0..i];
                 return p.parseFragment(input[i+1..]);
             } else if (c != '/' and c != '?' and !is_pchar(input[i..])) {
-                        return error.InvalidChar;
+                return error.InvalidChar;
             }
         }
         p.uri.query = input;
@@ -369,19 +418,19 @@ test "single char" {
     assert(mem.eql(u8, uri.fragment, ""));
 }
 
-// test "ipv6" {//todo
-//     var p = Parser.init(std.debug.global_allocator);
-//     defer p.deinit();
-//     const uri = try p.parse("ldap://[2001:db8::7]/c=GB?objectClass?one");
-//     assert(mem.eql(u8, uri.scheme, "ldap"));
-//     assert(mem.eql(u8, uri.username, ""));
-//     assert(mem.eql(u8, uri.password, ""));
-//     assert(mem.eql(u8, uri.host, "[2001:db8::7]"));
-//     assert(uri.port == null);
-//     assert(mem.eql(u8, uri.path[0], "/c=GB"));
-//     assert(mem.eql(u8, uri.query, "objectClass?one"));
-//     assert(mem.eql(u8, uri.fragment, ""));
-// }
+test "ipv6" {
+    var p = Parser.init(std.debug.global_allocator);
+    defer p.deinit();
+    const uri = try p.parse("ldap://[2001:db8::7]/c=GB?objectClass?one");
+    assert(mem.eql(u8, uri.scheme, "ldap"));
+    assert(mem.eql(u8, uri.username, ""));
+    assert(mem.eql(u8, uri.password, ""));
+    assert(mem.eql(u8, uri.host, "[2001:db8::7]"));
+    assert(uri.port == null);
+    assert(mem.eql(u8, uri.path[0], "/c=GB"));
+    assert(mem.eql(u8, uri.query, "objectClass?one"));
+    assert(mem.eql(u8, uri.fragment, ""));
+}
 
 test "mailto" {
     var p = Parser.init(std.debug.global_allocator);
@@ -437,4 +486,25 @@ test "userinfo" {
     assert(mem.eql(u8, uri.path[0], "/"));
     assert(mem.eql(u8, uri.query, ""));
     assert(mem.eql(u8, uri.fragment, ""));
+}
+
+test "map query" {
+    var p = Parser.init(std.debug.global_allocator);
+    defer p.deinit();
+    var uri = try p.parse("https://ziglang.org:80/documentation/master/?test;1=true&false#toc-Introduction");
+    assert(mem.eql(u8, uri.scheme, "https"));
+    assert(mem.eql(u8, uri.username, ""));
+    assert(mem.eql(u8, uri.password, ""));
+    assert(mem.eql(u8, uri.host, "ziglang.org"));
+    assert(uri.port.? == 80);
+    assert(mem.eql(u8, uri.path[0], "/documentation"));
+    assert(mem.eql(u8, uri.path[1], "/master"));
+    assert(mem.eql(u8, uri.path[2], "/"));
+    assert(mem.eql(u8, uri.query, "test;1=true&false"));
+    assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
+    const map = try uri.mapQuery(std.debug.global_allocator);
+    defer map.deinit();
+    assert(mem.eql(u8, map.get("test").?.value, ""));
+    assert(mem.eql(u8, map.get("1").?.value, "true"));
+    assert(mem.eql(u8, map.get("false").?.value, ""));
 }

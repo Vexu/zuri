@@ -19,12 +19,16 @@ const URI = struct {
     path: [][]const u8,
     query: []const u8,
     fragment: []const u8,
+    valueMap: ?*ValueMap,
+    allocator: *Allocator,
 
-    pub fn mapQuery(u: *const URI, allocator: *Allocator) !ValueMap {
+    pub fn mapQuery(u: *const URI) !ValueMap {
         if (u.query.len == 0) {
             return error.NoQuery;
+        } else if (u.valueMap) |m| {
+            return m.*;
         }
-        var map = ValueMap.init(allocator);
+        var map = ValueMap.init(u.allocator);
         errdefer map.deinit();
         var start: u32 = 0;
         var mid: u32 = 0;
@@ -48,6 +52,13 @@ const URI = struct {
         }
 
         return map;
+    }
+
+    pub fn deinit(u: URI) void {
+        u.allocator.free(u.path);
+        if (u.valueMap) |m| {
+            m.deinit();
+        }
     }
 };
 
@@ -84,6 +95,8 @@ pub const Parser = struct {
             .path = [][]const u8 {},
             .query = "",
             .fragment = "",
+            .allocator = p.path_list.allocator,
+            .valueMap = null,
         };
         p.uri = &uri;
 
@@ -378,6 +391,7 @@ test "basic url" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("https://ziglang.org:80/documentation/master/?test#toc-Introduction");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -394,6 +408,7 @@ test "short" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("telnet://192.0.2.16:80/");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "telnet"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -408,6 +423,7 @@ test "single char" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("a");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, ""));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -422,6 +438,7 @@ test "ipv6" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("ldap://[2001:db8::7]/c=GB?objectClass?one");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "ldap"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -436,6 +453,7 @@ test "mailto" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("mailto:John.Doe@example.com");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "mailto"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -450,6 +468,7 @@ test "tel" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("tel:+1-816-555-1212");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "tel"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -464,6 +483,7 @@ test "urn" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("urn:oasis:names:specification:docbook:dtd:xml:4.1.2");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "urn"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -478,6 +498,7 @@ test "userinfo" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     const uri = try p.parse("ftp://username:password@host.com/");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "ftp"));
     assert(mem.eql(u8, uri.username, "username"));
     assert(mem.eql(u8, uri.password, "password"));
@@ -492,6 +513,7 @@ test "map query" {
     var p = Parser.init(std.debug.global_allocator);
     defer p.deinit();
     var uri = try p.parse("https://ziglang.org:80/documentation/master/?test;1=true&false#toc-Introduction");
+    defer uri.deinit();
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -502,8 +524,7 @@ test "map query" {
     assert(mem.eql(u8, uri.path[2], "/"));
     assert(mem.eql(u8, uri.query, "test;1=true&false"));
     assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
-    const map = try uri.mapQuery(std.debug.global_allocator);
-    defer map.deinit();
+    const map = try uri.mapQuery();
     assert(mem.eql(u8, map.get("test").?.value, ""));
     assert(mem.eql(u8, map.get("1").?.value, "true"));
     assert(mem.eql(u8, map.get("false").?.value, ""));

@@ -56,7 +56,9 @@ const URI = struct {
     };
 
     pub fn parse(input: []const u8) URIError!URI {
-        assert(input.len > 0);
+        if (input.len == 0) {
+            return URIError.EmptyURI;
+        }
         var uri = URI{
             .scheme = "",
             .username = "",
@@ -72,7 +74,7 @@ const URI = struct {
 
         switch (input[0]) {
             'a'...'z', 'A'...'Z' => {
-                index += try uri.parseMaybeScheme(input);
+                index += uri.parseMaybeScheme(input);
             },
             else => {},
         }
@@ -82,19 +84,19 @@ const URI = struct {
             try uri.parseAuth(input[index..], &index);
         }
 
-        index += try uri.parsePath(input[index..]);
+        index += uri.parsePath(input[index..]);
 
         if (input.len > index + 1 and input[index] == '?') {
-            index += try uri.parseQuery(input[index + 1 ..]);
+            index += uri.parseQuery(input[index + 1 ..]);
         }
 
         if (input.len > index + 1 and input[index] == '#') {
-            try uri.parseFragment(input[index + 1 ..]);
+            uri.parseFragment(input[index + 1 ..]);
         }
         return uri;
     }
 
-    fn parseMaybeScheme(u: *URI, input: []const u8) URIError!usize {
+    fn parseMaybeScheme(u: *URI, input: []const u8) usize {
         for (input) |c, i| {
             switch (c) {
                 'a'...'z', 'A'...'Z', '0'...'9', '+', '-', '.' => {
@@ -123,7 +125,7 @@ const URI = struct {
                 },
                 '[' => {
                     if (i != 0)
-                        return error.InvalidChar;
+                        return URIError.InvalidChar;
                     return u.parseIP(input, index);
                 },
                 ':' => {
@@ -136,9 +138,10 @@ const URI = struct {
                     index.* += i;
                     return;
                 },
-                else => {
-                    if (!is_pchar(input))
-                        return error.InvalidChar;
+                else => if (!is_pchar(input)) {
+                    u.host = input[0..i];
+                    index.* += input.len;
+                    return;
                 },
             }
         }
@@ -148,25 +151,18 @@ const URI = struct {
 
     fn parseAuthColon(u: *URI, input: []const u8, index: *usize) URIError!void {
         for (input) |c, i| {
-            switch (c) {
-                '@' => {
-                    u.username = u.host;
-                    u.password = input[0..i];
-                    index.* += i + 1; //1 for the '@'
-                    return u.parseHost(input[i + 1 ..], index);
-                },
-                '/', '?', '#' => {
-                    u.port = parseUnsigned(u16, input[0..i], 10) catch return error.InvalidChar;
-                    index.* += i;
-                    return;
-                },
-                else => {
-                    if (!is_pchar(input))
-                        return error.InvalidChar;
-                },
+            if (c == '@') {
+                u.username = u.host;
+                u.password = input[0..i];
+                index.* += i + 1; //1 for the '@'
+                return u.parseHost(input[i + 1 ..], index);
+            } else if (c == '/' or c == '?' or c == '#' or !is_pchar(input)) {
+                u.port = parseUnsigned(u16, input[0..i], 10) catch return URIError.InvalidChar;
+                index.* += i;
+                return;
             }
         }
-        u.port = parseUnsigned(u16, input, 10) catch return error.InvalidChar;
+        u.port = parseUnsigned(u16, input, 10) catch return URIError.InvalidChar;
         index.* += input.len;
     }
 
@@ -180,17 +176,13 @@ const URI = struct {
                 },
                 '[' => {
                     if (i != 0)
-                        return error.InvalidChar;
+                        return URIError.InvalidChar;
                     return u.parseIP(input, index);
                 },
-                '/', '?', '#' => {
+                else => if (c == '/' or c == '?' or c == '#' or !is_pchar(input)) {
                     u.host = input[0..i];
                     index.* += i;
                     return;
-                },
-                else => {
-                    if (!is_pchar(input))
-                        return error.InvalidChar;
                 },
             }
         }
@@ -207,40 +199,42 @@ const URI = struct {
             switch (c) {
                 ':' => {
                     if (done) {
-                        index.* += i + 1; //1 for the ':'
+                        index.* += 1; // +1 for the ':'
                         return u.parsePort(input[i..], index);
                     }
                     digits = 0;
                     groups += 1;
                     if (groups > 7)
-                        return error.InvalidChar;
+                        return URIError.InvalidChar;
                 },
                 '.' => {
                     if (done)
-                        return error.InvalidChar;
-                    if (groups < 1 or digits > 3 or (digits == 3 and (parseUnsigned(u8, input[first..i], 10) catch return error.InvalidChar) >= 0))
-                        return error.InvalidChar;
+                        return URIError.InvalidChar;
+                    if (groups < 1 or digits > 3 or (digits == 3 and (parseUnsigned(u8, input[first..i], 10) catch return URIError.InvalidChar) >= 0))
+                        return URIError.InvalidChar;
                     digits = 0;
                     groups = 8;
                 },
                 '[' => {
                     if (i != 0)
-                        return error.InvalidChar;
+                        return URIError.InvalidChar;
                 },
                 ']' => {
                     u.host = input[0 .. i + 1];
                     done = true;
+                    index.* += u.host.len;
                 },
                 '/', '?', '#' => {
                     if (!done)
-                        return error.InvalidChar;
+                        return URIError.InvalidChar;
                     u.host = input[0..i];
-                    index.* += i;
                     return;
                 },
                 else => {
-                    if (digits == 4 or done) {
+                    if (digits == 4) {
                         return error.InvalidChar;
+                    } else if (done) {
+                        return;
                     } else if (digits == 0) {
                         first = i;
                     }
@@ -260,21 +254,18 @@ const URI = struct {
                 '0'...'9' => {
                     //igits
                 },
-                '/', '?', '#' => {
-                    u.port = parseUnsigned(u16, input[0..i], 10) catch return error.InvalidChar;
+                else => {
+                    u.port = parseUnsigned(u16, input[0..i], 10) catch return URIError.InvalidChar;
                     index.* += i;
                     return;
                 },
-                else => {
-                    return error.InvalidChar;
-                },
             }
         }
-        u.port = parseUnsigned(u16, input[0..], 10) catch return error.InvalidChar;
+        u.port = parseUnsigned(u16, input[0..], 10) catch return URIError.InvalidChar;
         index.* += input.len;
     }
 
-    fn parsePath(u: *URI, input: []const u8) URIError!usize {
+    fn parsePath(u: *URI, input: []const u8) usize {
         for (input) |c, i| {
             switch (c) {
                 '?', '#' => {
@@ -284,9 +275,9 @@ const URI = struct {
                 '/' => {
                     // allowed in path
                 },
-                else => {
-                    if (!is_pchar(input[i..]))
-                        return error.InvalidChar;
+                else => if (!is_pchar(input[i..])) {
+                    u.path = input[0..i];
+                    return u.path.len;
                 },
             }
         }
@@ -294,23 +285,22 @@ const URI = struct {
         return u.path.len;
     }
 
-    fn parseQuery(u: *URI, input: []const u8) URIError!usize {
+    fn parseQuery(u: *URI, input: []const u8) usize {
         for (input) |c, i| {
-            if (c == '#') {
+            if (c == '#' or (c != '/' and c != '?' and !is_pchar(input[i..]))) {
                 u.query = input[0..i];
                 return u.query.len + 1; // +1 for the '?'
-            } else if (c != '/' and c != '?' and !is_pchar(input[i..])) {
-                return error.InvalidChar;
             }
         }
         u.query = input;
         return input.len;
     }
 
-    fn parseFragment(u: *URI, input: []const u8) URIError!void {
+    fn parseFragment(u: *URI, input: []const u8) void {
         for (input) |c, i| {
             if (c != '/' and c != '?' and !is_pchar(input[i..])) {
-                return error.InvalidChar;
+                u.fragment = input[0..i];
+                return;
             }
         }
         u.fragment = input;
@@ -444,4 +434,13 @@ test "map query" {
     assert(mem.eql(u8, map.get("test").?.value, ""));
     assert(mem.eql(u8, map.get("1").?.value, "true"));
     assert(mem.eql(u8, map.get("false").?.value, ""));
+}
+
+test "ends in space" {
+    const uri = try URI.parse("https://ziglang.org/documentation/master/ something else");
+    assert(mem.eql(u8, uri.scheme, "https"));
+    assert(mem.eql(u8, uri.username, ""));
+    assert(mem.eql(u8, uri.password, ""));
+    assert(mem.eql(u8, uri.host, "ziglang.org"));
+    assert(mem.eql(u8, uri.path, "/documentation/master/"));
 }

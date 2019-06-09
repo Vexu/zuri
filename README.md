@@ -3,9 +3,9 @@
 
 ## Example
 ```Zig
-    const uri = try URI.parse("https://ziglang.org/documentation/master/#toc-Introduction");
-    assert(mem.eql(u8, uri.scheme, "https"));
-    assert(mem.eql(u8, uri.host, "ziglang.org"));
-    assert(mem.eql(u8, uri.path, "/documentation/master/"));
-    assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
+const uri = try Uri.parse("https://ziglang.org/documentation/master/#toc-Introduction");
+assert(mem.eql(u8, uri.scheme, "https"));
+assert(mem.eql(u8, uri.host, "ziglang.org"));
+assert(mem.eql(u8, uri.path, "/documentation/master/"));
+assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
 ```

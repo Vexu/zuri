@@ -18,20 +18,20 @@ pub const Uri = struct {
     fragment: []const u8,
     len: usize,
 
-    pub fn mapQuery(u: *const Uri, allocator: *Allocator) !ValueMap {
-        if (u.query.len == 0) {
+    pub fn mapQuery(allocator: *Allocator, query: []const u8) !ValueMap {
+        if (query.len == 0) {
             return error.NoQuery;
         }
         var map = ValueMap.init(allocator);
         errdefer map.deinit();
         var start: u32 = 0;
         var mid: u32 = 0;
-        for (u.query) |c, i| {
+        for (query) |c, i| {
             if (c == ';' or c == '&') {
                 if (mid != 0) {
-                    _ = try map.put(u.query[start..mid], u.query[mid + 1 .. i]);
+                    _ = try map.put(query[start..mid], query[mid + 1 .. i]);
                 } else {
-                    _ = try map.put(u.query[start..i], "");
+                    _ = try map.put(query[start..i], "");
                 }
                 start = @truncate(u32, i + 1);
                 mid = 0;
@@ -40,9 +40,9 @@ pub const Uri = struct {
             }
         }
         if (mid != 0) {
-            _ = try map.put(u.query[start..mid], u.query[mid + 1 ..]);
+            _ = try map.put(query[start..mid], query[mid + 1 ..]);
         } else {
-            _ = try map.put(u.query[start..], "");
+            _ = try map.put(query[start..], "");
         }
 
         return map;
@@ -433,7 +433,7 @@ test "map query" {
     assert(mem.eql(u8, uri.path, "/documentation/master/"));
     assert(mem.eql(u8, uri.query, "test;1=true&false"));
     assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
-    const map = try uri.mapQuery(std.debug.global_allocator);
+    const map = try Uri.mapQuery(std.debug.global_allocator, uri.query);
     defer map.deinit();
     assert(mem.eql(u8, map.get("test").?.value, ""));
     assert(mem.eql(u8, map.get("1").?.value, "true"));

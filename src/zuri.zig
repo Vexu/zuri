@@ -4,6 +4,7 @@ const Allocator = std.mem.Allocator;
 const HashMap = std.HashMap;
 const assert = std.debug.assert;
 const parseUnsigned = std.fmt.parseUnsigned;
+const net = std.net;
 
 const ValueMap = HashMap([]const u8, []const u8, mem.hash_slice_u8, mem.eql_slice_u8);
 
@@ -11,16 +12,30 @@ pub const Uri = struct {
     scheme: []const u8,
     username: []const u8,
     password: []const u8,
-    host: []const u8,
+    host: Host,
     port: ?u16,
     path: []const u8,
     query: []const u8,
     fragment: []const u8,
     len: usize,
 
-    pub fn mapQuery(allocator: *Allocator, query: []const u8) !ValueMap {
+    /// possible uri host values
+    pub const Host = union(enum) {
+        Ip4: u32,
+        Ip6: []const u8,
+        Name: []const u8,
+    };
+
+    /// possible errors for mapQuery
+    pub const MapError = error{
+        NoQuery,
+        OutOfMemory,
+    };
+
+    /// map query string into a hashmap of key value pairs with no value being an empty string
+    pub fn mapQuery(allocator: *Allocator, query: []const u8) MapError!ValueMap {
         if (query.len == 0) {
-            return error.NoQuery;
+            return MapError.NoQuery;
         }
         var map = ValueMap.init(allocator);
         errdefer map.deinit();
@@ -48,21 +63,27 @@ pub const Uri = struct {
         return map;
     }
 
+    /// possible errors for parse
     pub const Error = error{
+        /// input is not a valid uri due to a invalid character
+        /// mosty a result of invalid ipv6
         InvalidChar,
-        EmptyURI,
-        NoQuery,
+
+        /// given input was empty
+        EmptyUri,
     };
 
+    /// parse URI from input
+    /// empty input is an error
     pub fn parse(input: []const u8) Error!Uri {
         if (input.len == 0) {
-            return Error.EmptyURI;
+            return Error.EmptyUri;
         }
         var uri = Uri{
             .scheme = "",
             .username = "",
             .password = "",
-            .host = "",
+            .host = Host{ .Name = "" },
             .port = null,
             .path = "",
             .query = "",
@@ -80,6 +101,11 @@ pub const Uri = struct {
         if (input.len > uri.len + 2 and input[uri.len] == '/' and input[uri.len + 1] == '/') {
             uri.len += 2; // for the '//'
             try uri.parseAuth(input[uri.len..]);
+        }
+
+        // make host ip4 address if possible
+        if (uri.host == Host.Name and uri.host.Name.len > 0) blk: {
+            uri.host = Host{ .Ip4 = net.parseIp4(uri.host.Name) catch break :blk };
         }
 
         uri.parsePath(input[uri.len..]);
@@ -128,34 +154,34 @@ pub const Uri = struct {
                     return u.parseIP(input);
                 },
                 ':' => {
-                    u.host = input[0..i];
+                    u.host.Name = input[0..i];
                     u.len += i + 1; // +1 for the '@'
                     return u.parseAuthColon(input[i + 1 ..]);
                 },
                 '/', '?', '#' => {
-                    u.host = input[0..i];
+                    u.host.Name = input[0..i];
                     u.len += i;
                     return;
                 },
-                else => if (!is_pchar(input)) {
-                    u.host = input[0..i];
+                else => if (!isPchar(input)) {
+                    u.host.Name = input[0..i];
                     u.len += input.len;
                     return;
                 },
             }
         }
-        u.host = input;
+        u.host.Name = input;
         u.len += input.len;
     }
 
     fn parseAuthColon(u: *Uri, input: []const u8) Error!void {
         for (input) |c, i| {
             if (c == '@') {
-                u.username = u.host;
+                u.username = u.host.Name;
                 u.password = input[0..i];
                 u.len += i + 1; //1 for the '@'
                 return u.parseHost(input[i + 1 ..]);
-            } else if (c == '/' or c == '?' or c == '#' or !is_pchar(input)) {
+            } else if (c == '/' or c == '?' or c == '#' or !isPchar(input)) {
                 u.port = parseUnsigned(u16, input[0..i], 10) catch return Error.InvalidChar;
                 u.len += i;
                 return;
@@ -169,7 +195,7 @@ pub const Uri = struct {
         for (input) |c, i| {
             switch (c) {
                 ':' => {
-                    u.host = input[0..i];
+                    u.host.Name = input[0..i];
                     u.len += i + 1; // +1 for the ':'
                     return u.parsePort(input[i..]);
                 },
@@ -178,14 +204,14 @@ pub const Uri = struct {
                         return Error.InvalidChar;
                     return u.parseIP(input);
                 },
-                else => if (c == '/' or c == '?' or c == '#' or !is_pchar(input)) {
-                    u.host = input[0..i];
+                else => if (c == '/' or c == '?' or c == '#' or !isPchar(input)) {
+                    u.host.Name = input[0..i];
                     u.len += i;
                     return;
                 },
             }
         }
-        u.host = input[0..];
+        u.host.Name = input[0..];
         u.len += input.len;
     }
 
@@ -219,14 +245,13 @@ pub const Uri = struct {
                         return Error.InvalidChar;
                 },
                 ']' => {
-                    u.host = input[0 .. i + 1];
+                    u.host = Host{ .Ip6 = input[1..i] };
                     done = true;
-                    u.len += u.host.len;
+                    u.len += i + 1; // index to len
                 },
                 '/', '?', '#' => {
                     if (!done)
                         return Error.InvalidChar;
-                    u.host = input[0..i];
                     return;
                 },
                 else => {
@@ -237,7 +262,7 @@ pub const Uri = struct {
                     } else if (digits == 0) {
                         first = i;
                     }
-                    if (!is_hex(c)) {
+                    if (!isHex(c)) {
                         return error.InvalidChar;
                     }
 
@@ -245,6 +270,7 @@ pub const Uri = struct {
                 },
             }
         }
+        return Error.InvalidChar;
     }
 
     fn parsePort(u: *Uri, input: []const u8) Error!void {
@@ -266,7 +292,7 @@ pub const Uri = struct {
 
     fn parsePath(u: *Uri, input: []const u8) void {
         for (input) |c, i| {
-            if (c != '/' and (c == '?' or c == '#' or !is_pchar(input[i..]))) {
+            if (c != '/' and (c == '?' or c == '#' or !isPchar(input[i..]))) {
                 u.path = input[0..i];
                 u.len += u.path.len;
                 return;
@@ -279,7 +305,7 @@ pub const Uri = struct {
     fn parseQuery(u: *Uri, input: []const u8) void {
         u.len += 1; // +1 for the '?'
         for (input) |c, i| {
-            if (c == '#' or (c != '/' and c != '?' and !is_pchar(input[i..]))) {
+            if (c == '#' or (c != '/' and c != '?' and !isPchar(input[i..]))) {
                 u.query = input[0..i];
                 u.len += u.query.len;
                 return;
@@ -292,7 +318,7 @@ pub const Uri = struct {
     fn parseFragment(u: *Uri, input: []const u8) void {
         u.len += 1; // +1 for the '#'
         for (input) |c, i| {
-            if (c != '/' and c != '?' and !is_pchar(input[i..])) {
+            if (c != '/' and c != '?' and !isPchar(input[i..])) {
                 u.fragment = input[0..i];
                 u.len += u.fragment.len;
                 return;
@@ -301,30 +327,32 @@ pub const Uri = struct {
         u.fragment = input;
         u.len += u.fragment.len;
     }
+
+    /// returns true if str starts with a valid path character or a percentage encoded octet
+    pub fn isPchar(str: []const u8) bool {
+        assert(str.len > 0);
+        return switch (str[0]) {
+            'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
+            '%' => str.len > 3 and isHex(str[1]) and isHex(str[2]),
+            else => false,
+        };
+    }
+
+    /// returns true if c is a hexadecimal digit
+    pub fn isHex(c: u8) bool {
+        return switch (c) {
+            '0'...'9', 'a'...'f', 'A'...'F' => true,
+            else => false,
+        };
+    }
 };
-
-fn is_pchar(c: []const u8) bool {
-    assert(c.len > 0);
-    return switch (c[0]) {
-        'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
-        '%' => c.len > 3 and is_hex(c[1]) and is_hex(c[2]),
-        else => false,
-    };
-}
-
-fn is_hex(c: u8) bool {
-    return switch (c) {
-        '0'...'9', 'a'...'f', 'A'...'F' => true,
-        else => false,
-    };
-}
 
 test "basic url" {
     const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test#toc-Introduction");
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, "ziglang.org"));
+    assert(mem.eql(u8, uri.host.Name, "ziglang.org"));
     assert(uri.port.? == 80);
     assert(mem.eql(u8, uri.path, "/documentation/master/"));
     assert(mem.eql(u8, uri.query, "test"));
@@ -337,7 +365,7 @@ test "short" {
     assert(mem.eql(u8, uri.scheme, "telnet"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, "192.0.2.16"));
+    assert(uri.host.Ip4 == 0x100200C0);
     assert(uri.port.? == 80);
     assert(mem.eql(u8, uri.path, "/"));
     assert(mem.eql(u8, uri.query, ""));
@@ -350,7 +378,7 @@ test "single char" {
     assert(mem.eql(u8, uri.scheme, ""));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, ""));
+    assert(mem.eql(u8, uri.host.Name, ""));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "a"));
     assert(mem.eql(u8, uri.query, ""));
@@ -363,7 +391,7 @@ test "ipv6" {
     assert(mem.eql(u8, uri.scheme, "ldap"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, "[2001:db8::7]"));
+    assert(mem.eql(u8, uri.host.Ip6, "2001:db8::7"));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "/c=GB"));
     assert(mem.eql(u8, uri.query, "objectClass?one"));
@@ -376,7 +404,7 @@ test "mailto" {
     assert(mem.eql(u8, uri.scheme, "mailto"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, ""));
+    assert(mem.eql(u8, uri.host.Name, ""));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "John.Doe@example.com"));
     assert(mem.eql(u8, uri.query, ""));
@@ -389,7 +417,7 @@ test "tel" {
     assert(mem.eql(u8, uri.scheme, "tel"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, ""));
+    assert(mem.eql(u8, uri.host.Name, ""));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "+1-816-555-1212"));
     assert(mem.eql(u8, uri.query, ""));
@@ -402,7 +430,7 @@ test "urn" {
     assert(mem.eql(u8, uri.scheme, "urn"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, ""));
+    assert(mem.eql(u8, uri.host.Name, ""));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "oasis:names:specification:docbook:dtd:xml:4.1.2"));
     assert(mem.eql(u8, uri.query, ""));
@@ -415,7 +443,7 @@ test "userinfo" {
     assert(mem.eql(u8, uri.scheme, "ftp"));
     assert(mem.eql(u8, uri.username, "username"));
     assert(mem.eql(u8, uri.password, "password"));
-    assert(mem.eql(u8, uri.host, "host.com"));
+    assert(mem.eql(u8, uri.host.Name, "host.com"));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "/"));
     assert(mem.eql(u8, uri.query, ""));
@@ -428,7 +456,7 @@ test "map query" {
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, "ziglang.org"));
+    assert(mem.eql(u8, uri.host.Name, "ziglang.org"));
     assert(uri.port.? == 80);
     assert(mem.eql(u8, uri.path, "/documentation/master/"));
     assert(mem.eql(u8, uri.query, "test;1=true&false"));
@@ -445,7 +473,7 @@ test "ends in space" {
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host, "ziglang.org"));
+    assert(mem.eql(u8, uri.host.Name, "ziglang.org"));
     assert(mem.eql(u8, uri.path, "/documentation/master/"));
     assert(uri.len == 41);
 }

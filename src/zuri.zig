@@ -63,11 +63,80 @@ pub const Uri = struct {
         return map;
     }
 
+    /// possible errors for decode and encode
+    pub const EncodeError = error{
+        InvalidCharacter,
+        OutOfMemory,
+    };
+
+    /// decode path if it is percent encoded
+    pub fn decode(allocator: *Allocator, path: []const u8) EncodeError!?[]u8 {
+        var ret: ?[]u8 = null;
+        var ret_index: usize = 0;
+        var i: usize = 0;
+
+        while (i < path.len) : (i += 1) {
+            if (path[i] == '%') {
+                if (!isPchar(path[i..])) {
+                    return EncodeError.InvalidCharacter;
+                }
+                if (ret == null) {
+                    ret = try allocator.alloc(u8, path.len);
+                    mem.copy(u8, ret.?, path[0..i]);
+                    ret_index = i;
+                }
+
+                // charToDigit can't fail because the chars are validated earlier
+                var new = (std.fmt.charToDigit(path[i + 1], 16) catch unreachable) << 4;
+                new |= std.fmt.charToDigit(path[i + 2], 16) catch unreachable;
+                ret.?[ret_index] = new;
+                ret_index += 1;
+                i += 2;
+            } else if (path[i] != '/' and !isPchar(path[i..])) {
+                return EncodeError.InvalidCharacter;
+            } else if (ret != null) {
+                ret.?[ret_index] = path[i];
+                ret_index += 1;
+            }
+        }
+        if (ret != null) {
+            return allocator.realloc(ret.?, ret_index) catch ret.?[0..ret_index];
+        }
+        return ret;
+    }
+
+    /// percent encode if path contains characters not allowed in paths
+    pub fn encode(allocator: *Allocator, path: []const u8) EncodeError!?[]u8 {
+        var ret: ?[]u8 = null;
+        var ret_index: usize = 0;
+        for (path) |c, i| {
+            if (c != '/' and !isPchar(path[i..])) {
+                if (ret == null) {
+                    ret = try allocator.alloc(u8, path.len * 3);
+                    mem.copy(u8, ret.?, path[0..i]);
+                    ret_index = i;
+                }
+                const hex_digits = "0123456789ABCDEF";
+                ret.?[ret_index] = '%';
+                ret.?[ret_index + 1] = hex_digits[(c & 0xF0) >> 4];
+                ret.?[ret_index + 2] = hex_digits[c & 0x0F];
+                ret_index += 3;
+            } else if (ret != null) {
+                ret.?[ret_index] = c;
+                ret_index += 1;
+            }
+        }
+        if (ret != null) {
+            return allocator.realloc(ret.?, ret_index) catch ret.?[0..ret_index];
+        }
+        return ret;
+    }
+
     /// possible errors for parse
     pub const Error = error{
         /// input is not a valid uri due to a invalid character
         /// mosty a result of invalid ipv6
-        InvalidChar,
+        InvalidCharacter,
 
         /// given input was empty
         EmptyUri,
@@ -153,7 +222,7 @@ pub const Uri = struct {
                 },
                 '[' => {
                     if (i != 0)
-                        return Error.InvalidChar;
+                        return Error.InvalidCharacter;
                     return u.parseIP(input);
                 },
                 ':' => {
@@ -185,12 +254,12 @@ pub const Uri = struct {
                 u.len += i + 1; //1 for the '@'
                 return u.parseHost(input[i + 1 ..]);
             } else if (c == '/' or c == '?' or c == '#' or !isPchar(input)) {
-                u.port = parseUnsigned(u16, input[0..i], 10) catch return Error.InvalidChar;
+                u.port = parseUnsigned(u16, input[0..i], 10) catch return Error.InvalidCharacter;
                 u.len += i;
                 return;
             }
         }
-        u.port = parseUnsigned(u16, input, 10) catch return Error.InvalidChar;
+        u.port = parseUnsigned(u16, input, 10) catch return Error.InvalidCharacter;
         u.len += input.len;
     }
 
@@ -204,7 +273,7 @@ pub const Uri = struct {
                 },
                 '[' => {
                     if (i != 0)
-                        return Error.InvalidChar;
+                        return Error.InvalidCharacter;
                     return u.parseIP(input);
                 },
                 else => if (c == '/' or c == '?' or c == '#' or !isPchar(input)) {
@@ -233,19 +302,19 @@ pub const Uri = struct {
                     digits = 0;
                     groups += 1;
                     if (groups > 7)
-                        return Error.InvalidChar;
+                        return Error.InvalidCharacter;
                 },
                 '.' => {
                     if (done)
-                        return Error.InvalidChar;
-                    if (groups < 1 or digits > 3 or (digits == 3 and (parseUnsigned(u8, input[first..i], 10) catch return Error.InvalidChar) >= 0))
-                        return Error.InvalidChar;
+                        return Error.InvalidCharacter;
+                    if (groups < 1 or digits > 3 or (digits == 3 and (parseUnsigned(u8, input[first..i], 10) catch return Error.InvalidCharacter) >= 0))
+                        return Error.InvalidCharacter;
                     digits = 0;
                     groups = 8;
                 },
                 '[' => {
                     if (i != 0)
-                        return Error.InvalidChar;
+                        return Error.InvalidCharacter;
                 },
                 ']' => {
                     u.host = Host{ .Ip6 = input[1..i] };
@@ -254,26 +323,26 @@ pub const Uri = struct {
                 },
                 '/', '?', '#' => {
                     if (!done)
-                        return Error.InvalidChar;
+                        return Error.InvalidCharacter;
                     return;
                 },
                 else => {
                     if (digits == 4) {
-                        return error.InvalidChar;
+                        return error.InvalidCharacter;
                     } else if (done) {
                         return;
                     } else if (digits == 0) {
                         first = i;
                     }
                     if (!isHex(c)) {
-                        return error.InvalidChar;
+                        return error.InvalidCharacter;
                     }
 
                     digits += 1;
                 },
             }
         }
-        return Error.InvalidChar;
+        return Error.InvalidCharacter;
     }
 
     fn parsePort(u: *Uri, input: []const u8) Error!void {
@@ -283,13 +352,13 @@ pub const Uri = struct {
                     //igits
                 },
                 else => {
-                    u.port = parseUnsigned(u16, input[0..i], 10) catch return Error.InvalidChar;
+                    u.port = parseUnsigned(u16, input[0..i], 10) catch return Error.InvalidCharacter;
                     u.len += i;
                     return;
                 },
             }
         }
-        u.port = parseUnsigned(u16, input[0..], 10) catch return Error.InvalidChar;
+        u.port = parseUnsigned(u16, input[0..], 10) catch return Error.InvalidCharacter;
         u.len += input.len;
     }
 
@@ -331,7 +400,7 @@ pub const Uri = struct {
         u.len += u.fragment.len;
     }
 
-    /// returns true if str starts with a valid path character or a percentage encoded octet
+    /// returns true if str starts with a valid path character or a percent encoded octet
     pub fn isPchar(str: []const u8) bool {
         assert(str.len > 0);
         return switch (str[0]) {
@@ -485,4 +554,18 @@ test "assume auth" {
     const uri = try Uri.parse("ziglang.org", true);
     assert(mem.eql(u8, uri.host.Name, "ziglang.org"));
     assert(uri.len == 11);
+}
+
+test "encode" {
+    const allocator = std.debug.global_allocator;
+    const path = (try Uri.encode(allocator, "/안녕하세요.html")).?;
+    defer allocator.free(path);
+    assert(mem.eql(u8, path, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html"));
+}
+
+test "decode" {
+    const allocator = std.debug.global_allocator;
+    const path = (try Uri.decode(allocator, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
+    defer allocator.free(path);
+    assert(mem.eql(u8, path, "/안녕하세요.html"));
 }

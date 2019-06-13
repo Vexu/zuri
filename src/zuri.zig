@@ -75,7 +75,8 @@ pub const Uri = struct {
 
     /// parse URI from input
     /// empty input is an error
-    pub fn parse(input: []const u8) Error!Uri {
+    /// if assume_auth is true then `example.com` will result in `example.com` being the host instead of path
+    pub fn parse(input: []const u8, assume_auth: bool) Error!Uri {
         if (input.len == 0) {
             return Error.EmptyUri;
         }
@@ -100,6 +101,8 @@ pub const Uri = struct {
 
         if (input.len > uri.len + 2 and input[uri.len] == '/' and input[uri.len + 1] == '/') {
             uri.len += 2; // for the '//'
+            try uri.parseAuth(input[uri.len..]);
+        } else if (assume_auth) {
             try uri.parseAuth(input[uri.len..]);
         }
 
@@ -348,7 +351,7 @@ pub const Uri = struct {
 };
 
 test "basic url" {
-    const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test#toc-Introduction");
+    const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test#toc-Introduction", false);
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -361,7 +364,7 @@ test "basic url" {
 }
 
 test "short" {
-    const uri = try Uri.parse("telnet://192.0.2.16:80/");
+    const uri = try Uri.parse("telnet://192.0.2.16:80/", false);
     assert(mem.eql(u8, uri.scheme, "telnet"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -374,7 +377,7 @@ test "short" {
 }
 
 test "single char" {
-    const uri = try Uri.parse("a");
+    const uri = try Uri.parse("a", false);
     assert(mem.eql(u8, uri.scheme, ""));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -387,7 +390,7 @@ test "single char" {
 }
 
 test "ipv6" {
-    const uri = try Uri.parse("ldap://[2001:db8::7]/c=GB?objectClass?one");
+    const uri = try Uri.parse("ldap://[2001:db8::7]/c=GB?objectClass?one", false);
     assert(mem.eql(u8, uri.scheme, "ldap"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -400,7 +403,7 @@ test "ipv6" {
 }
 
 test "mailto" {
-    const uri = try Uri.parse("mailto:John.Doe@example.com");
+    const uri = try Uri.parse("mailto:John.Doe@example.com", false);
     assert(mem.eql(u8, uri.scheme, "mailto"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -413,7 +416,7 @@ test "mailto" {
 }
 
 test "tel" {
-    const uri = try Uri.parse("tel:+1-816-555-1212");
+    const uri = try Uri.parse("tel:+1-816-555-1212", false);
     assert(mem.eql(u8, uri.scheme, "tel"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -426,7 +429,7 @@ test "tel" {
 }
 
 test "urn" {
-    const uri = try Uri.parse("urn:oasis:names:specification:docbook:dtd:xml:4.1.2");
+    const uri = try Uri.parse("urn:oasis:names:specification:docbook:dtd:xml:4.1.2", false);
     assert(mem.eql(u8, uri.scheme, "urn"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -439,7 +442,7 @@ test "urn" {
 }
 
 test "userinfo" {
-    const uri = try Uri.parse("ftp://username:password@host.com/");
+    const uri = try Uri.parse("ftp://username:password@host.com/", false);
     assert(mem.eql(u8, uri.scheme, "ftp"));
     assert(mem.eql(u8, uri.username, "username"));
     assert(mem.eql(u8, uri.password, "password"));
@@ -452,7 +455,7 @@ test "userinfo" {
 }
 
 test "map query" {
-    const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test;1=true&false#toc-Introduction");
+    const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test;1=true&false#toc-Introduction", false);
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
@@ -469,11 +472,17 @@ test "map query" {
 }
 
 test "ends in space" {
-    const uri = try Uri.parse("https://ziglang.org/documentation/master/ something else");
+    const uri = try Uri.parse("https://ziglang.org/documentation/master/ something else", false);
     assert(mem.eql(u8, uri.scheme, "https"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
     assert(mem.eql(u8, uri.host.Name, "ziglang.org"));
     assert(mem.eql(u8, uri.path, "/documentation/master/"));
     assert(uri.len == 41);
+}
+
+test "assume auth" {
+    const uri = try Uri.parse("ziglang.org", true);
+    assert(mem.eql(u8, uri.host.Name, "ziglang.org"));
+    assert(uri.len == 11);
 }

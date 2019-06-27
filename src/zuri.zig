@@ -132,6 +132,45 @@ pub const Uri = struct {
         return ret;
     }
 
+    /// collapses '..' and '.' in `path`
+    /// assumes `path` to be valid
+    pub fn collapsePath(allocator: *Allocator, path: []const u8) error{OutOfMemory}![]u8 {
+        assert(path.len > 0);
+        var list = std.ArrayList([]const u8).init(allocator);
+        errdefer list.deinit();
+
+        var it = mem.tokenize(path, "/");
+        while (it.next()) |p| {
+            if (mem.eql(u8, p, ".")) {
+                continue;
+            } else if (mem.eql(u8, p, "..")) {
+                _ = list.popOrNull();
+            } else {
+                try list.append(p);
+            }
+        }
+
+        var buf = try allocator.alloc(u8, path.len);
+        errdefer allocator.free(buf);
+        var len: usize = 0;
+        var segments = list.toOwnedSlice();
+        defer allocator.free(segments);
+
+        for (segments) |s| {
+            buf[len] = '/';
+            len += 1;
+            mem.copy(u8, buf[len..], s);
+            len += s.len;
+        }
+
+        if (path[path.len - 1] == '/') {
+            buf[len] = '/';
+            len += 1;
+        }
+
+        return allocator.realloc(buf, len) catch buf[0..len];
+    }
+
     /// possible errors for parse
     pub const Error = error{
         /// input is not a valid uri due to a invalid character
@@ -568,4 +607,29 @@ test "decode" {
     const path = (try Uri.decode(allocator, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
     defer allocator.free(path);
     assert(mem.eql(u8, path, "/안녕하세요.html"));
+}
+
+test "collapsePath" {
+    const allocator = std.debug.global_allocator;
+    var a = try Uri.collapsePath(allocator, "/a/b/..");
+    assert(mem.eql(u8, a, "/a"));
+    allocator.free(a);
+    a = try Uri.collapsePath(allocator, "/a/b/../");
+    assert(mem.eql(u8, a, "/a/"));
+    allocator.free(a);
+    a = try Uri.collapsePath(allocator, "/a/b/c/../d/../");
+    assert(mem.eql(u8, a, "/a/b/"));
+    allocator.free(a);
+    a = try Uri.collapsePath(allocator, "/a/b/c/../d/..");
+    assert(mem.eql(u8, a, "/a/b"));
+    allocator.free(a);
+    a = try Uri.collapsePath(allocator, "/a/b/c/../d/.././");
+    assert(mem.eql(u8, a, "/a/b/"));
+    allocator.free(a);
+    a = try Uri.collapsePath(allocator, "/a/b/c/../d/../.");
+    assert(mem.eql(u8, a, "/a/b"));
+    allocator.free(a);
+    a = try Uri.collapsePath(allocator, "/a/../../");
+    assert(mem.eql(u8, a, "/"));
+    allocator.free(a);
 }

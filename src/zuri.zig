@@ -458,6 +458,8 @@ pub const Uri = struct {
     }
 };
 
+const alloc = std.heap.direct_allocator;
+
 test "basic url" {
     const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test#toc-Introduction", false);
     assert(mem.eql(u8, uri.scheme, "https"));
@@ -572,7 +574,7 @@ test "map query" {
     assert(mem.eql(u8, uri.path, "/documentation/master/"));
     assert(mem.eql(u8, uri.query, "test;1=true&false"));
     assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
-    const map = try Uri.mapQuery(std.debug.global_allocator, uri.query);
+    const map = try Uri.mapQuery(alloc, uri.query);
     defer map.deinit();
     assert(mem.eql(u8, map.get("test").?.value, ""));
     assert(mem.eql(u8, map.get("1").?.value, "true"));
@@ -596,40 +598,37 @@ test "assume auth" {
 }
 
 test "encode" {
-    const allocator = std.debug.global_allocator;
-    const path = (try Uri.encode(allocator, "/안녕하세요.html")).?;
-    defer allocator.free(path);
+    const path = (try Uri.encode(alloc, "/안녕하세요.html")).?;
+    defer alloc.free(path);
     assert(mem.eql(u8, path, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html"));
 }
 
 test "decode" {
-    const allocator = std.debug.global_allocator;
-    const path = (try Uri.decode(allocator, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
-    defer allocator.free(path);
+    const path = (try Uri.decode(alloc, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
+    defer alloc.free(path);
     assert(mem.eql(u8, path, "/안녕하세요.html"));
 }
 
 test "collapsePath" {
-    const allocator = std.debug.global_allocator;
-    var a = try Uri.collapsePath(allocator, "/a/b/..");
+    var a = try Uri.collapsePath(alloc, "/a/b/..");
     assert(mem.eql(u8, a, "/a"));
-    allocator.free(a);
-    a = try Uri.collapsePath(allocator, "/a/b/../");
+    alloc.free(a);
+    a = try Uri.collapsePath(alloc, "/a/b/../");
     assert(mem.eql(u8, a, "/a/"));
-    allocator.free(a);
-    a = try Uri.collapsePath(allocator, "/a/b/c/../d/../");
+    alloc.free(a);
+    a = try Uri.collapsePath(alloc, "/a/b/c/../d/../");
     assert(mem.eql(u8, a, "/a/b/"));
-    allocator.free(a);
-    a = try Uri.collapsePath(allocator, "/a/b/c/../d/..");
+    alloc.free(a);
+    a = try Uri.collapsePath(alloc, "/a/b/c/../d/..");
     assert(mem.eql(u8, a, "/a/b"));
-    allocator.free(a);
-    a = try Uri.collapsePath(allocator, "/a/b/c/../d/.././");
+    alloc.free(a);
+    a = try Uri.collapsePath(alloc, "/a/b/c/../d/.././");
     assert(mem.eql(u8, a, "/a/b/"));
-    allocator.free(a);
-    a = try Uri.collapsePath(allocator, "/a/b/c/../d/../.");
+    alloc.free(a);
+    a = try Uri.collapsePath(alloc, "/a/b/c/../d/../.");
     assert(mem.eql(u8, a, "/a/b"));
-    allocator.free(a);
-    a = try Uri.collapsePath(allocator, "/a/../../");
+    alloc.free(a);
+    a = try Uri.collapsePath(alloc, "/a/../../");
     assert(mem.eql(u8, a, "/"));
-    allocator.free(a);
+    alloc.free(a);
 }

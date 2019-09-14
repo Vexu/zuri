@@ -1,12 +1,11 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
-const HashMap = std.HashMap;
 const assert = std.debug.assert;
 const parseUnsigned = std.fmt.parseUnsigned;
 const net = std.net;
 
-const ValueMap = HashMap([]const u8, []const u8, mem.hash_slice_u8, mem.eql_slice_u8);
+const ValueMap = std.StringHashMap([]const u8);
 
 pub const Uri = struct {
     scheme: []const u8,
@@ -216,7 +215,8 @@ pub const Uri = struct {
 
         // make host ip4 address if possible
         if (uri.host == Host.Name and uri.host.Name.len > 0) blk: {
-            uri.host = Host{ .Ip4 = net.parseIp4(uri.host.Name) catch break :blk };
+            var a = net.parseIp4(uri.host.Name) catch break :blk;
+            uri.host = Host{ .Ip4 = a }; // workaround for https://github.com/ziglang/zig/issues/3234
         }
 
         uri.parsePath(input[uri.len..]);

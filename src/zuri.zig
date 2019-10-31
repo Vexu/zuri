@@ -20,8 +20,8 @@ pub const Uri = struct {
 
     /// possible uri host values
     pub const Host = union(enum) {
-        Ip4: u32,
-        Ip6: []const u8,
+        Ip4: net.IpAddress,
+        Ip6: []const u8, // TODO combine with Ip4 when IpAddress.parseIp6 can parse "2001:db8::7"
         Name: []const u8,
     };
 
@@ -215,7 +215,8 @@ pub const Uri = struct {
 
         // make host ip4 address if possible
         if (uri.host == Host.Name and uri.host.Name.len > 0) blk: {
-            var a = net.parseIp4(uri.host.Name) catch break :blk;
+            var a = net.IpAddress.parseIp4(uri.host.Name, 0) catch break :blk;
+            a.setPort(uri.port orelse 0);
             uri.host = Host{ .Ip4 = a }; // workaround for https://github.com/ziglang/zig/issues/3234
         }
 
@@ -478,7 +479,9 @@ test "short" {
     assert(mem.eql(u8, uri.scheme, "telnet"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(uri.host.Ip4 == 0x100200C0);
+    var buf = [_]u8 {0} ** 100;
+    var ip = std.fmt.bufPrint(buf[0..], "{}", uri.host.Ip4) catch unreachable;
+    std.testing.expect(std.mem.eql(u8, ip, "192.0.2.16:80"));
     assert(uri.port.? == 80);
     assert(mem.eql(u8, uri.path, "/"));
     assert(mem.eql(u8, uri.query, ""));

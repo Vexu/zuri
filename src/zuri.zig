@@ -20,8 +20,7 @@ pub const Uri = struct {
 
     /// possible uri host values
     pub const Host = union(enum) {
-        Ip4: net.IpAddress,
-        Ip6: []const u8, // TODO combine with Ip4 when IpAddress.parseIp6 can parse "2001:db8::7"
+        Ip: net.IpAddress,
         Name: []const u8,
     };
 
@@ -216,8 +215,11 @@ pub const Uri = struct {
         // make host ip4 address if possible
         if (uri.host == Host.Name and uri.host.Name.len > 0) blk: {
             var a = net.IpAddress.parseIp4(uri.host.Name, 0) catch break :blk;
-            a.setPort(uri.port orelse 0);
-            uri.host = Host{ .Ip4 = a }; // workaround for https://github.com/ziglang/zig/issues/3234
+            uri.host = Host{ .Ip = a }; // workaround for https://github.com/ziglang/zig/issues/3234
+        }
+
+        if (uri.host == Host.Ip and uri.port != null) {
+            uri.host.Ip.setPort(uri.port.?);
         }
 
         uri.parsePath(input[uri.len..]);
@@ -328,76 +330,32 @@ pub const Uri = struct {
     }
 
     fn parseIP(u: *Uri, input: []const u8) Error!void {
-        var groups: u8 = 0;
-        var digits: u8 = 0;
-        var done = false;
-        var first: usize = 0;
-        for (input) |c, i| {
-            switch (c) {
-                ':' => {
-                    if (done) {
-                        u.len += 1; // +1 for the ':'
-                        return u.parsePort(input[i..]);
-                    }
-                    digits = 0;
-                    groups += 1;
-                    if (groups > 7)
-                        return Error.InvalidCharacter;
-                },
-                '.' => {
-                    if (done)
-                        return Error.InvalidCharacter;
-                    if (groups < 1 or digits > 3 or (digits == 3 and (parseUnsigned(u8, input[first..i], 10) catch return Error.InvalidCharacter) >= 0))
-                        return Error.InvalidCharacter;
-                    digits = 0;
-                    groups = 8;
-                },
-                '[' => {
-                    if (i != 0)
-                        return Error.InvalidCharacter;
-                },
-                ']' => {
-                    u.host = Host{ .Ip6 = input[1..i] };
-                    done = true;
-                    u.len += i + 1; // index to len
-                },
-                '/', '?', '#' => {
-                    if (!done)
-                        return Error.InvalidCharacter;
-                    return;
-                },
-                else => {
-                    if (digits == 4) {
-                        return error.InvalidCharacter;
-                    } else if (done) {
-                        return;
-                    } else if (digits == 0) {
-                        first = i;
-                    }
-                    if (!isHex(c)) {
-                        return error.InvalidCharacter;
-                    }
+        const end = mem.indexOfScalar(u8, input, ']') orelse return Error.InvalidCharacter;
+        var addr = net.IpAddress.parseIp6(input[1..end], 0) catch return Error.InvalidCharacter;
+        u.host = Host{ .Ip = addr };
+        u.len += end + 1;
 
-                    digits += 1;
-                },
-            }
+        if (input.len > end + 2 and input[end + 1] == ':') {
+            u.len += 1;
+            try u.parsePort(input[end + 2 ..]);
         }
-        return Error.InvalidCharacter;
     }
 
     fn parsePort(u: *Uri, input: []const u8) Error!void {
         for (input) |c, i| {
             switch (c) {
                 '0'...'9' => {
-                    //igits
+                    // digits
                 },
                 else => {
+                    if (i == 0) return Error.InvalidCharacter;
                     u.port = parseUnsigned(u16, input[0..i], 10) catch return Error.InvalidCharacter;
                     u.len += i;
                     return;
                 },
             }
         }
+        if (input.len == 0) return Error.InvalidCharacter;
         u.port = parseUnsigned(u16, input[0..], 10) catch return Error.InvalidCharacter;
         u.len += input.len;
     }
@@ -479,8 +437,8 @@ test "short" {
     assert(mem.eql(u8, uri.scheme, "telnet"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    var buf = [_]u8 {0} ** 100;
-    var ip = std.fmt.bufPrint(buf[0..], "{}", uri.host.Ip4) catch unreachable;
+    var buf = [_]u8{0} ** 100;
+    var ip = std.fmt.bufPrint(buf[0..], "{}", uri.host.Ip) catch unreachable;
     std.testing.expect(std.mem.eql(u8, ip, "192.0.2.16:80"));
     assert(uri.port.? == 80);
     assert(mem.eql(u8, uri.path, "/"));
@@ -507,7 +465,9 @@ test "ipv6" {
     assert(mem.eql(u8, uri.scheme, "ldap"));
     assert(mem.eql(u8, uri.username, ""));
     assert(mem.eql(u8, uri.password, ""));
-    assert(mem.eql(u8, uri.host.Ip6, "2001:db8::7"));
+    var buf = [_]u8{0} ** 100;
+    var ip = std.fmt.bufPrint(buf[0..], "{}", uri.host.Ip) catch unreachable;
+    std.testing.expect(std.mem.eql(u8, ip, "[2001:db8::7]:0"));
     assert(uri.port == null);
     assert(mem.eql(u8, uri.path, "/c=GB"));
     assert(mem.eql(u8, uri.query, "objectClass?one"));

@@ -130,9 +130,9 @@ pub const Uri = struct {
         return ret;
     }
 
-    /// collapses '..' and '.' in `path`
+    /// resolves `path`, leaves trailing '/'
     /// assumes `path` to be valid
-    pub fn collapsePath(allocator: *Allocator, path: []const u8) error{OutOfMemory}![]u8 {
+    pub fn resolvePath(allocator: *Allocator, path: []const u8) error{OutOfMemory}![]u8 {
         assert(path.len > 0);
         var list = std.ArrayList([]const u8).init(allocator);
         errdefer list.deinit();
@@ -572,26 +572,26 @@ test "decode" {
     assert(mem.eql(u8, path, "/안녕하세요.html"));
 }
 
-test "collapsePath" {
-    var a = try Uri.collapsePath(alloc, "/a/b/..");
+test "resolvePath" {
+    var a = try Uri.resolvePath(alloc, "/a/b/..");
     assert(mem.eql(u8, a, "/a"));
     alloc.free(a);
-    a = try Uri.collapsePath(alloc, "/a/b/../");
+    a = try Uri.resolvePath(alloc, "/a/b/../");
     assert(mem.eql(u8, a, "/a/"));
     alloc.free(a);
-    a = try Uri.collapsePath(alloc, "/a/b/c/../d/../");
+    a = try Uri.resolvePath(alloc, "/a/b/c/../d/../");
     assert(mem.eql(u8, a, "/a/b/"));
     alloc.free(a);
-    a = try Uri.collapsePath(alloc, "/a/b/c/../d/..");
+    a = try Uri.resolvePath(alloc, "/a/b/c/../d/..");
     assert(mem.eql(u8, a, "/a/b"));
     alloc.free(a);
-    a = try Uri.collapsePath(alloc, "/a/b/c/../d/.././");
+    a = try Uri.resolvePath(alloc, "/a/b/c/../d/.././");
     assert(mem.eql(u8, a, "/a/b/"));
     alloc.free(a);
-    a = try Uri.collapsePath(alloc, "/a/b/c/../d/../.");
+    a = try Uri.resolvePath(alloc, "/a/b/c/../d/../.");
     assert(mem.eql(u8, a, "/a/b"));
     alloc.free(a);
-    a = try Uri.collapsePath(alloc, "/a/../../");
+    a = try Uri.resolvePath(alloc, "/a/../../");
     assert(mem.eql(u8, a, "/"));
     alloc.free(a);
 }

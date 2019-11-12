@@ -20,7 +20,7 @@ pub const Uri = struct {
 
     /// possible uri host values
     pub const Host = union(enum) {
-        Ip: net.IpAddress,
+        Ip: net.Address,
         Name: []const u8,
     };
 
@@ -214,7 +214,7 @@ pub const Uri = struct {
 
         // make host ip4 address if possible
         if (uri.host == Host.Name and uri.host.Name.len > 0) blk: {
-            var a = net.IpAddress.parseIp4(uri.host.Name, 0) catch break :blk;
+            var a = net.Address.parseIp4(uri.host.Name, 0) catch break :blk;
             uri.host = Host{ .Ip = a }; // workaround for https://github.com/ziglang/zig/issues/3234
         }
 
@@ -331,7 +331,7 @@ pub const Uri = struct {
 
     fn parseIP(u: *Uri, input: []const u8) Error!void {
         const end = mem.indexOfScalar(u8, input, ']') orelse return Error.InvalidCharacter;
-        var addr = net.IpAddress.parseIp6(input[1..end], 0) catch return Error.InvalidCharacter;
+        var addr = net.Address.parseIp6(input[1..end], 0) catch return Error.InvalidCharacter;
         u.host = Host{ .Ip = addr };
         u.len += end + 1;
 

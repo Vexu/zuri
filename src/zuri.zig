@@ -536,11 +536,11 @@ test "map query" {
     expect(mem.eql(u8, uri.path, "/documentation/master/"));
     expect(mem.eql(u8, uri.query, "test;1=true&false"));
     expect(mem.eql(u8, uri.fragment, "toc-Introduction"));
-    const map = try Uri.mapQuery(alloc, uri.query);
+    var map = try Uri.mapQuery(alloc, uri.query);
     defer map.deinit();
-    expect(mem.eql(u8, map.get("test").?.value, ""));
-    expect(mem.eql(u8, map.get("1").?.value, "true"));
-    expect(mem.eql(u8, map.get("false").?.value, ""));
+    expect(mem.eql(u8, map.get("test").?, ""));
+    expect(mem.eql(u8, map.get("1").?, "true"));
+    expect(mem.eql(u8, map.get("false").?, ""));
 }
 
 test "ends in space" {

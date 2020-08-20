@@ -9,3 +9,8 @@ assert(mem.eql(u8, uri.host, "ziglang.org"));
 assert(mem.eql(u8, uri.path, "/documentation/master/"));
 assert(mem.eql(u8, uri.fragment, "toc-Introduction"));
 ```
+
+## Zig version
+By default the master branch version requires the latest Zig master version.
+
+For Zig 0.6.0 use commit 89ff8258ccd09d0a4cfda649828cc1c45f2b1f8f.

@@ -5,6 +5,7 @@ const assert = std.debug.assert;
 const parseUnsigned = std.fmt.parseUnsigned;
 const net = std.net;
 const expect = std.testing.expect;
+const expectEqualStrings = std.testing.expectEqualStrings;
 
 const ValueMap = std.StringHashMap([]const u8);
 
@@ -170,6 +171,49 @@ pub const Uri = struct {
         return allocator.realloc(buf, len) catch buf[0..len];
     }
 
+    pub const scheme_to_port = std.ComptimeStringMap(u16, .{
+        .{ "acap", 674 },
+        .{ "afp", 548 },
+        .{ "dict", 2628 },
+        .{ "dns", 53 },
+        .{ "ftp", 21 },
+        .{ "git", 9418 },
+        .{ "gopher", 70 },
+        .{ "http", 80 },
+        .{ "https", 443 },
+        .{ "imap", 143 },
+        .{ "ipp", 631 },
+        .{ "ipps", 631 },
+        .{ "irc", 194 },
+        .{ "ircs", 6697 },
+        .{ "ldap", 389 },
+        .{ "ldaps", 636 },
+        .{ "mms", 1755 },
+        .{ "msrp", 2855 },
+        .{ "mtqp", 1038 },
+        .{ "nfs", 111 },
+        .{ "nntp", 119 },
+        .{ "nntps", 563 },
+        .{ "pop", 110 },
+        .{ "prospero", 1525 },
+        .{ "redis", 6379 },
+        .{ "rsync", 873 },
+        .{ "rtsp", 554 },
+        .{ "rtsps", 322 },
+        .{ "rtspu", 5005 },
+        .{ "sftp", 22 },
+        .{ "smb", 445 },
+        .{ "snmp", 161 },
+        .{ "ssh", 22 },
+        .{ "svn", 3690 },
+        .{ "telnet", 23 },
+        .{ "ventrilo", 3784 },
+        .{ "vnc", 5900 },
+        .{ "wais", 210 },
+        .{ "ws", 80 },
+        .{ "wss", 443 },
+    });
+
     /// possible errors for parse
     pub const Error = error{
         /// input is not a valid uri due to a invalid character
@@ -243,6 +287,7 @@ pub const Uri = struct {
                 },
                 ':' => {
                     u.scheme = input[0..i];
+                    u.port = scheme_to_port.get(u.scheme);
                     u.len += u.scheme.len + 1; // +1 for the ':'
                     return;
                 },
@@ -420,142 +465,142 @@ pub const Uri = struct {
 
 test "basic url" {
     const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test#toc-Introduction", false);
-    expect(mem.eql(u8, uri.scheme, "https"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, "ziglang.org"));
+    expectEqualStrings("https", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("ziglang.org", uri.host.name);
     expect(uri.port.? == 80);
-    expect(mem.eql(u8, uri.path, "/documentation/master/"));
-    expect(mem.eql(u8, uri.query, "test"));
-    expect(mem.eql(u8, uri.fragment, "toc-Introduction"));
+    expectEqualStrings("/documentation/master/", uri.path);
+    expectEqualStrings("test", uri.query);
+    expectEqualStrings("toc-Introduction", uri.fragment);
     expect(uri.len == 66);
 }
 
 test "short" {
     const uri = try Uri.parse("telnet://192.0.2.16:80/", false);
-    expect(mem.eql(u8, uri.scheme, "telnet"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
+    expectEqualStrings("telnet", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
     var buf = [_]u8{0} ** 100;
     var ip = std.fmt.bufPrint(buf[0..], "{}", .{uri.host.ip}) catch unreachable;
-    expect(mem.eql(u8, ip, "192.0.2.16:80"));
+    expectEqualStrings("192.0.2.16:80", ip);
     expect(uri.port.? == 80);
-    expect(mem.eql(u8, uri.path, "/"));
-    expect(mem.eql(u8, uri.query, ""));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("/", uri.path);
+    expectEqualStrings("", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 23);
 }
 
 test "single char" {
     const uri = try Uri.parse("a", false);
-    expect(mem.eql(u8, uri.scheme, ""));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, ""));
+    expectEqualStrings("", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("", uri.host.name);
     expect(uri.port == null);
-    expect(mem.eql(u8, uri.path, "a"));
-    expect(mem.eql(u8, uri.query, ""));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("a", uri.path);
+    expectEqualStrings("", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 1);
 }
 
 test "ipv6" {
     const uri = try Uri.parse("ldap://[2001:db8::7]/c=GB?objectClass?one", false);
-    expect(mem.eql(u8, uri.scheme, "ldap"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
+    expectEqualStrings("ldap", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
     var buf = [_]u8{0} ** 100;
     var ip = std.fmt.bufPrint(buf[0..], "{}", .{uri.host.ip}) catch unreachable;
-    expect(std.mem.eql(u8, ip, "[2001:db8::7]:0"));
-    expect(uri.port == null);
-    expect(mem.eql(u8, uri.path, "/c=GB"));
-    expect(mem.eql(u8, uri.query, "objectClass?one"));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("[2001:db8::7]:389", ip);
+    expect(uri.port.? == 389);
+    expectEqualStrings("/c=GB", uri.path);
+    expectEqualStrings("objectClass?one", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 41);
 }
 
 test "mailto" {
     const uri = try Uri.parse("mailto:John.Doe@example.com", false);
-    expect(mem.eql(u8, uri.scheme, "mailto"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, ""));
+    expectEqualStrings("mailto", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("", uri.host.name);
     expect(uri.port == null);
-    expect(mem.eql(u8, uri.path, "John.Doe@example.com"));
-    expect(mem.eql(u8, uri.query, ""));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("John.Doe@example.com", uri.path);
+    expectEqualStrings("", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 27);
 }
 
 test "tel" {
     const uri = try Uri.parse("tel:+1-816-555-1212", false);
-    expect(mem.eql(u8, uri.scheme, "tel"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, ""));
+    expectEqualStrings("tel", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("", uri.host.name);
     expect(uri.port == null);
-    expect(mem.eql(u8, uri.path, "+1-816-555-1212"));
-    expect(mem.eql(u8, uri.query, ""));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("+1-816-555-1212", uri.path);
+    expectEqualStrings("", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 19);
 }
 
 test "urn" {
     const uri = try Uri.parse("urn:oasis:names:specification:docbook:dtd:xml:4.1.2", false);
-    expect(mem.eql(u8, uri.scheme, "urn"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, ""));
+    expectEqualStrings("urn", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("", uri.host.name);
     expect(uri.port == null);
-    expect(mem.eql(u8, uri.path, "oasis:names:specification:docbook:dtd:xml:4.1.2"));
-    expect(mem.eql(u8, uri.query, ""));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("oasis:names:specification:docbook:dtd:xml:4.1.2", uri.path);
+    expectEqualStrings("", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 51);
 }
 
 test "userinfo" {
     const uri = try Uri.parse("ftp://username:password@host.com/", false);
-    expect(mem.eql(u8, uri.scheme, "ftp"));
-    expect(mem.eql(u8, uri.username, "username"));
-    expect(mem.eql(u8, uri.password, "password"));
-    expect(mem.eql(u8, uri.host.name, "host.com"));
-    expect(uri.port == null);
-    expect(mem.eql(u8, uri.path, "/"));
-    expect(mem.eql(u8, uri.query, ""));
-    expect(mem.eql(u8, uri.fragment, ""));
+    expectEqualStrings("ftp", uri.scheme);
+    expectEqualStrings("username", uri.username);
+    expectEqualStrings("password", uri.password);
+    expectEqualStrings("host.com", uri.host.name);
+    expect(uri.port.? == 21);
+    expectEqualStrings("/", uri.path);
+    expectEqualStrings("", uri.query);
+    expectEqualStrings("", uri.fragment);
     expect(uri.len == 33);
 }
 
 test "map query" {
     const uri = try Uri.parse("https://ziglang.org:80/documentation/master/?test;1=true&false#toc-Introduction", false);
-    expect(mem.eql(u8, uri.scheme, "https"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, "ziglang.org"));
+    expectEqualStrings("https", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("ziglang.org", uri.host.name);
     expect(uri.port.? == 80);
-    expect(mem.eql(u8, uri.path, "/documentation/master/"));
-    expect(mem.eql(u8, uri.query, "test;1=true&false"));
-    expect(mem.eql(u8, uri.fragment, "toc-Introduction"));
+    expectEqualStrings("/documentation/master/", uri.path);
+    expectEqualStrings("test;1=true&false", uri.query);
+    expectEqualStrings("toc-Introduction", uri.fragment);
     var map = try Uri.mapQuery(alloc, uri.query);
     defer map.deinit();
-    expect(mem.eql(u8, map.get("test").?, ""));
-    expect(mem.eql(u8, map.get("1").?, "true"));
-    expect(mem.eql(u8, map.get("false").?, ""));
+    expectEqualStrings("", map.get("test").?);
+    expectEqualStrings("true", map.get("1").?);
+    expectEqualStrings("", map.get("false").?);
 }
 
 test "ends in space" {
     const uri = try Uri.parse("https://ziglang.org/documentation/master/ something else", false);
-    expect(mem.eql(u8, uri.scheme, "https"));
-    expect(mem.eql(u8, uri.username, ""));
-    expect(mem.eql(u8, uri.password, ""));
-    expect(mem.eql(u8, uri.host.name, "ziglang.org"));
-    expect(mem.eql(u8, uri.path, "/documentation/master/"));
+    expectEqualStrings("https", uri.scheme);
+    expectEqualStrings("", uri.username);
+    expectEqualStrings("", uri.password);
+    expectEqualStrings("ziglang.org", uri.host.name);
+    expectEqualStrings("/documentation/master/", uri.path);
     expect(uri.len == 41);
 }
 
 test "assume auth" {
     const uri = try Uri.parse("ziglang.org", true);
-    expect(mem.eql(u8, uri.host.name, "ziglang.org"));
+    expectEqualStrings("ziglang.org", uri.host.name);
     expect(uri.len == 11);
 }
 
@@ -564,29 +609,29 @@ const alloc = &arena.allocator;
 
 test "encode" {
     const path = (try Uri.encode(alloc, "/안녕하세요.html")).?;
-    expect(mem.eql(u8, path, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html"));
+    expectEqualStrings("/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html", path);
 }
 
 test "decode" {
     const path = (try Uri.decode(alloc, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
-    expect(mem.eql(u8, path, "/안녕하세요.html"));
+    expectEqualStrings("/안녕하세요.html", path);
 }
 
 test "resolvePath" {
     var a = try Uri.resolvePath(alloc, "/a/b/..");
-    expect(mem.eql(u8, a, "/a"));
+    expectEqualStrings("/a", a);
     a = try Uri.resolvePath(alloc, "/a/b/../");
-    expect(mem.eql(u8, a, "/a/"));
+    expectEqualStrings("/a/", a);
     a = try Uri.resolvePath(alloc, "/a/b/c/../d/../");
-    expect(mem.eql(u8, a, "/a/b/"));
+    expectEqualStrings("/a/b/", a);
     a = try Uri.resolvePath(alloc, "/a/b/c/../d/..");
-    expect(mem.eql(u8, a, "/a/b"));
+    expectEqualStrings("/a/b", a);
     a = try Uri.resolvePath(alloc, "/a/b/c/../d/.././");
-    expect(mem.eql(u8, a, "/a/b/"));
+    expectEqualStrings("/a/b/", a);
     a = try Uri.resolvePath(alloc, "/a/b/c/../d/../.");
-    expect(mem.eql(u8, a, "/a/b"));
+    expectEqualStrings("/a/b", a);
     a = try Uri.resolvePath(alloc, "/a/../../");
-    expect(mem.eql(u8, a, "/"));
+    expectEqualStrings("/", a);
 
     arena.deinit();
 }

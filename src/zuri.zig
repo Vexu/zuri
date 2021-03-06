@@ -4,8 +4,9 @@ const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const parseUnsigned = std.fmt.parseUnsigned;
 const net = std.net;
-const expect = std.testing.expect;
-const expectEqualStrings = std.testing.expectEqualStrings;
+const testing = std.testing;
+const expect = testing.expect;
+const expectEqualStrings = testing.expectEqualStrings;
 
 const ValueMap = std.StringHashMap([]const u8);
 
@@ -72,6 +73,7 @@ pub const Uri = struct {
     /// decode path if it is percent encoded
     pub fn decode(allocator: *Allocator, path: []const u8) EncodeError!?[]u8 {
         var ret: ?[]u8 = null;
+        errdefer if (ret) |some| allocator.free(some);
         var ret_index: usize = 0;
         var i: usize = 0;
 
@@ -99,10 +101,9 @@ pub const Uri = struct {
                 ret_index += 1;
             }
         }
-        if (ret != null) {
-            return allocator.realloc(ret.?, ret_index) catch ret.?[0..ret_index];
-        }
-        return ret;
+
+        if (ret) |some| return allocator.shrink(some, ret_index);
+        return null;
     }
 
     /// percent encode if path contains characters not allowed in paths
@@ -126,10 +127,9 @@ pub const Uri = struct {
                 ret_index += 1;
             }
         }
-        if (ret != null) {
-            return allocator.realloc(ret.?, ret_index) catch ret.?[0..ret_index];
-        }
-        return ret;
+
+        if (ret) |some| return allocator.shrink(some, ret_index);
+        return null;
     }
 
     /// resolves `path`, leaves trailing '/'
@@ -137,7 +137,7 @@ pub const Uri = struct {
     pub fn resolvePath(allocator: *Allocator, path: []const u8) error{OutOfMemory}![]u8 {
         assert(path.len > 0);
         var list = std.ArrayList([]const u8).init(allocator);
-        errdefer list.deinit();
+        defer list.deinit();
 
         var it = mem.tokenize(path, "/");
         while (it.next()) |p| {
@@ -153,10 +153,8 @@ pub const Uri = struct {
         var buf = try allocator.alloc(u8, path.len);
         errdefer allocator.free(buf);
         var len: usize = 0;
-        var segments = list.toOwnedSlice();
-        defer allocator.free(segments);
 
-        for (segments) |s| {
+        for (list.items) |s| {
             buf[len] = '/';
             len += 1;
             mem.copy(u8, buf[len..], s);
@@ -168,7 +166,7 @@ pub const Uri = struct {
             len += 1;
         }
 
-        return allocator.realloc(buf, len) catch buf[0..len];
+        return allocator.shrink(buf, len);
     }
 
     pub const scheme_to_port = std.ComptimeStringMap(u16, .{
@@ -297,87 +295,42 @@ pub const Uri = struct {
                 },
             }
         }
-        return;
     }
 
     fn parseAuth(u: *Uri, input: []const u8) Error!void {
-        for (input) |c, i| {
-            switch (c) {
-                '@' => {
-                    u.username = input[0..i];
-                    u.len += i + 1; // +1 for the '@'
-                    return u.parseHost(input[i + 1 ..]);
-                },
+        var i: u32 = 0;
+        var at_index = i;
+        while (i < input.len) : (i += 1) {
+            switch (input[i]) {
+                '@' => at_index = i,
                 '[' => {
-                    if (i != 0)
-                        return error.InvalidCharacter;
-                    return u.parseIP(input);
+                    if (i != 0) return error.InvalidCharacter;
+                    return u.parseIP6(input);
                 },
-                ':' => {
-                    u.host.name = input[0..i];
-                    u.len += i + 1; // +1 for the '@'
-                    return u.parseAuthColon(input[i + 1 ..]);
-                },
-                '/', '?', '#' => {
-                    u.host.name = input[0..i];
-                    u.len += i;
-                    return;
-                },
-                else => if (!isPchar(input)) {
-                    u.host.name = input[0..i];
-                    u.len += input.len;
-                    return;
-                },
+                else => if (!isPchar(input[i..])) break,
             }
         }
-        u.host.name = input;
-        u.len += input.len;
-    }
 
-    fn parseAuthColon(u: *Uri, input: []const u8) Error!void {
-        for (input) |c, i| {
-            if (c == '@') {
-                u.username = u.host.name;
-                u.password = input[0..i];
-                u.len += i + 1; //1 for the '@'
-                return u.parseHost(input[i + 1 ..]);
-            } else if (c == '/' or c == '?' or c == '#' or !isPchar(input)) {
-                u.port = parseUnsigned(u16, input[0..i], 10) catch return error.InvalidCharacter;
-                u.len += i;
-                return;
+        if (at_index != 0) {
+            u.username = input[0..at_index];
+            if (mem.indexOfScalar(u8, u.username, ':')) |colon| {
+                u.password = u.username[colon + 1 ..];
+                u.username = u.username[0..colon];
             }
+            at_index += 1;
         }
-        u.port = parseUnsigned(u16, input, 10) catch return error.InvalidCharacter;
-        u.len += input.len;
+
+        u.host.name = input[at_index..i];
+        u.len += i;
+        if (mem.indexOfScalar(u8, u.host.name, ':')) |colon| {
+            u.port = parseUnsigned(u16, u.host.name[colon + 1 ..], 10) catch return error.InvalidCharacter;
+            u.host.name = u.host.name[0..colon];
+        }
     }
 
-    fn parseHost(u: *Uri, input: []const u8) Error!void {
-        for (input) |c, i| {
-            switch (c) {
-                ':' => {
-                    u.host.name = input[0..i];
-                    u.len += i + 1; // +1 for the ':'
-                    return u.parsePort(input[i..]);
-                },
-                '[' => {
-                    if (i != 0)
-                        return error.InvalidCharacter;
-                    return u.parseIP(input);
-                },
-                else => if (c == '/' or c == '?' or c == '#' or !isPchar(input)) {
-                    u.host.name = input[0..i];
-                    u.len += i;
-                    return;
-                },
-            }
-        }
-        u.host.name = input[0..];
-        u.len += input.len;
-    }
-
-    fn parseIP(u: *Uri, input: []const u8) Error!void {
+    fn parseIP6(u: *Uri, input: []const u8) Error!void {
         const end = mem.indexOfScalar(u8, input, ']') orelse return error.InvalidCharacter;
-        var addr = net.Address.parseIp6(input[1..end], 0) catch return error.InvalidCharacter;
+        const addr = net.Address.parseIp6(input[1..end], 0) catch return error.InvalidCharacter;
         u.host = .{ .ip = addr };
         u.len += end + 1;
 
@@ -388,22 +341,16 @@ pub const Uri = struct {
     }
 
     fn parsePort(u: *Uri, input: []const u8) Error!void {
-        for (input) |c, i| {
-            switch (c) {
-                '0'...'9' => {
-                    // digits
-                },
-                else => {
-                    if (i == 0) return error.InvalidCharacter;
-                    u.port = parseUnsigned(u16, input[0..i], 10) catch return error.InvalidCharacter;
-                    u.len += i;
-                    return;
-                },
+        var i: u32 = 0;
+        while (i < input.len) : (i += 1) {
+            switch (input[i]) {
+                '0'...'9' => {}, // digits
+                else => break,
             }
         }
-        if (input.len == 0) return error.InvalidCharacter;
-        u.port = parseUnsigned(u16, input[0..], 10) catch return error.InvalidCharacter;
-        u.len += input.len;
+        if (i == 0) return error.InvalidCharacter;
+        u.port = parseUnsigned(u16, input[0..i], 10) catch return error.InvalidCharacter;
+        u.len += i;
     }
 
     fn parsePath(u: *Uri, input: []const u8) void {
@@ -581,7 +528,7 @@ test "map query" {
     expectEqualStrings("/documentation/master/", uri.path);
     expectEqualStrings("test;1=true&false", uri.query);
     expectEqualStrings("toc-Introduction", uri.fragment);
-    var map = try Uri.mapQuery(alloc, uri.query);
+    var map = try Uri.mapQuery(std.testing.allocator, uri.query);
     defer map.deinit();
     expectEqualStrings("", map.get("test").?);
     expectEqualStrings("true", map.get("1").?);
@@ -604,20 +551,36 @@ test "assume auth" {
     expect(uri.len == 11);
 }
 
-var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-const alloc = &arena.allocator;
+test "username contains @" {
+    const uri = try Uri.parse("https://1.1.1.1&@2.2.2.2%23@3.3.3.3", false);
+    expectEqualStrings("https", uri.scheme);
+    expectEqualStrings("1.1.1.1&@2.2.2.2%23", uri.username);
+    expectEqualStrings("", uri.password);
+    var buf = [_]u8{0} ** 100;
+    var ip = std.fmt.bufPrint(buf[0..], "{}", .{uri.host.ip}) catch unreachable;
+    expectEqualStrings("3.3.3.3:443", ip);
+    expect(uri.port.? == 443);
+    expectEqualStrings("", uri.path);
+    expect(uri.len == 35);
+}
 
 test "encode" {
-    const path = (try Uri.encode(alloc, "/안녕하세요.html")).?;
+    const path = (try Uri.encode(testing.allocator, "/안녕하세요.html")).?;
+    defer testing.allocator.free(path);
     expectEqualStrings("/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html", path);
 }
 
 test "decode" {
-    const path = (try Uri.decode(alloc, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
+    const path = (try Uri.decode(testing.allocator, "/%EC%95%88%EB%85%95%ED%95%98%EC%84%B8%EC%9A%94.html")).?;
+    defer testing.allocator.free(path);
     expectEqualStrings("/안녕하세요.html", path);
 }
 
 test "resolvePath" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = &arena.allocator;
+
     var a = try Uri.resolvePath(alloc, "/a/b/..");
     expectEqualStrings("/a", a);
     a = try Uri.resolvePath(alloc, "/a/b/../");
@@ -632,6 +595,4 @@ test "resolvePath" {
     expectEqualStrings("/a/b", a);
     a = try Uri.resolvePath(alloc, "/a/../../");
     expectEqualStrings("/", a);
-
-    arena.deinit();
 }

@@ -27,32 +27,26 @@ pub const Uri = struct {
         name: []const u8,
     };
 
-    /// possible errors for mapQuery
-    pub const MapError = error{
-        NoQuery,
-        OutOfMemory,
-    };
-
     /// map query string into a hashmap of key value pairs with no value being an empty string
-    pub fn mapQuery(allocator: *Allocator, query: []const u8) MapError!ValueMap {
+    pub fn mapQuery(allocator: *Allocator, query: []const u8) Allocator.Error!ValueMap {
         if (query.len == 0) {
-            return error.NoQuery;
+            return ValueMap.init(allocator);
         }
         var map = ValueMap.init(allocator);
         errdefer map.deinit();
-        var start: u32 = 0;
-        var mid: u32 = 0;
+        var start: usize = 0;
+        var mid: usize = 0;
         for (query) |c, i| {
-            if (c == ';' or c == '&') {
+            if (c == '&') {
                 if (mid != 0) {
                     _ = try map.put(query[start..mid], query[mid + 1 .. i]);
                 } else {
                     _ = try map.put(query[start..i], "");
                 }
-                start = @truncate(u32, i + 1);
+                start = i + 1;
                 mid = 0;
             } else if (c == '=') {
-                mid = @truncate(u32, i);
+                mid = i;
             }
         }
         if (mid != 0) {
@@ -530,8 +524,7 @@ test "map query" {
     expectEqualStrings("toc-Introduction", uri.fragment);
     var map = try Uri.mapQuery(std.testing.allocator, uri.query);
     defer map.deinit();
-    expectEqualStrings("", map.get("test").?);
-    expectEqualStrings("true", map.get("1").?);
+    expectEqualStrings("true", map.get("test;1").?);
     expectEqualStrings("", map.get("false").?);
 }
 

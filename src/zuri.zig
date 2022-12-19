@@ -122,7 +122,7 @@ pub const Uri = struct {
             }
         }
 
-        if (ret) |some| return allocator.shrink(some, ret_index);
+        if (ret) |some| return try allocator.realloc(some, ret_index);
         return null;
     }
 
@@ -160,7 +160,7 @@ pub const Uri = struct {
             len += 1;
         }
 
-        return allocator.shrink(buf, len);
+        return allocator.realloc(buf, len);
     }
 
     pub const scheme_to_port = std.ComptimeStringMap(u16, .{

@@ -96,7 +96,7 @@ pub const Uri = struct {
             }
         }
 
-        if (ret) |some| return allocator.shrink(some, ret_index);
+        if (ret) |some| return try allocator.realloc(some, ret_index);
         return null;
     }
 
